@@ -517,26 +517,37 @@ namespace crow
         void do_write()
         {
             auto self = this->shared_from_this();
-            asio::async_write(
-              adaptor_.socket(), buffers_,
-              [self](const asio::error_code& ec, std::size_t /*bytes_transferred*/) {
-                  self->res.clear();
-                  self->res_body_copy_.clear();
-                  self->parser_.clear();
-                  if (!ec)
-                  {
-                      if (self->close_connection_)
-                      {
-                          self->adaptor_.shutdown_write();
-                          self->adaptor_.close();
-                          CROW_LOG_DEBUG << self << " from write(1)";
-                      }
-                  }
-                  else
-                  {
-                      CROW_LOG_DEBUG << self << " from write(2)";
-                  }
-              });
+
+            std::size_t bytes_transferred = 0;
+            asio::error_code ec{};
+
+            try
+            {
+                bytes_transferred = asio::write(adaptor_.socket(), buffers_);
+            }
+            catch (const asio::system_error& e)
+            {
+                ec = e.code();
+            }
+
+            self->res.clear();
+            self->res_body_copy_.clear();
+            self->parser_.clear();
+            CROW_LOG_DEBUG << self << " from write(0) " << bytes_transferred << ", " << ec.message();
+
+            if (!ec)
+            {
+                if (self->close_connection_)
+                {
+                    self->adaptor_.shutdown_write();
+                    self->adaptor_.close();
+                    CROW_LOG_DEBUG << self << " from write(1)";
+                }
+            }
+            else
+            {
+                CROW_LOG_DEBUG << self << " from write(2)";
+            }
         }
 
         inline void do_write_sync(std::vector<asio::const_buffer>& buffers)
