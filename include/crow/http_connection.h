@@ -474,69 +474,91 @@ namespace crow
         void do_read()
         {
             auto self = this->shared_from_this();
-            adaptor_.socket().async_read_some(
-              asio::buffer(buffer_),
-              [self](const asio::error_code& ec, std::size_t bytes_transferred) {
-                  bool error_while_reading = true;
-                  if (!ec)
-                  {
-                      bool ret = self->parser_.feed(self->buffer_.data(), bytes_transferred);
-                      if (ret && self->adaptor_.is_open())
-                      {
-                          error_while_reading = false;
-                      }
-                  }
 
-                  if (error_while_reading)
-                  {
-                      self->cancel_deadline_timer();
-                      self->parser_.done();
-                      self->adaptor_.shutdown_read();
-                      self->adaptor_.close();
-                      CROW_LOG_DEBUG << self << " from read(1) with description: \"" << http_errno_description(static_cast<http_errno>(self->parser_.http_errno)) << '\"';
-                  }
-                  else if (self->close_connection_)
-                  {
-                      self->cancel_deadline_timer();
-                      self->parser_.done();
-                      // adaptor will close after write
-                  }
-                  else if (!self->need_to_call_after_handlers_)
-                  {
-                      self->start_deadline();
-                      self->do_read();
-                  }
-                  else
-                  {
-                      // res will be completed later by user
-                      self->need_to_start_read_after_complete_ = true;
-                  }
-              });
+            std::size_t bytes_transferred = 0;
+            asio::error_code ec{};
+
+            try
+            {
+                bytes_transferred = adaptor_.socket().read_some(asio::buffer(buffer_));
+            }
+            catch (const asio::system_error& e)
+            {
+                ec = e.code();
+            }
+
+            bool error_while_reading = true;
+            if (!ec)
+            {
+                bool ret = self->parser_.feed(self->buffer_.data(), bytes_transferred);
+                if (ret && self->adaptor_.is_open())
+                {
+                    error_while_reading = false;
+                }
+            }
+
+            CROW_LOG_DEBUG << self << " from read(0) " << bytes_transferred << " " << ec.message();
+
+            if (error_while_reading)
+            {
+                self->cancel_deadline_timer();
+                self->parser_.done();
+                self->adaptor_.shutdown_read();
+                self->adaptor_.close();
+                CROW_LOG_DEBUG << self << " from read(1) with description: \"" << http_errno_description(static_cast<http_errno>(self->parser_.http_errno)) << '\"';
+            }
+            else if (self->close_connection_)
+            {
+                self->cancel_deadline_timer();
+                self->parser_.done();
+                // adaptor will close after write
+            }
+            else if (!self->need_to_call_after_handlers_)
+            {
+                self->start_deadline();
+                self->do_read();
+            }
+            else
+            {
+                // res will be completed later by user
+                self->need_to_start_read_after_complete_ = true;
+            }
         }
 
         void do_write()
         {
             auto self = this->shared_from_this();
-            asio::async_write(
-              adaptor_.socket(), buffers_,
-              [self](const asio::error_code& ec, std::size_t /*bytes_transferred*/) {
-                  self->res.clear();
-                  self->res_body_copy_.clear();
-                  self->parser_.clear();
-                  if (!ec)
-                  {
-                      if (self->close_connection_)
-                      {
-                          self->adaptor_.shutdown_write();
-                          self->adaptor_.close();
-                          CROW_LOG_DEBUG << self << " from write(1)";
-                      }
-                  }
-                  else
-                  {
-                      CROW_LOG_DEBUG << self << " from write(2)";
-                  }
-              });
+
+            std::size_t bytes_transferred = 0;
+            asio::error_code ec{};
+
+            try
+            {
+                bytes_transferred = asio::write(adaptor_.socket(), buffers_);
+            }
+            catch (const asio::system_error& e)
+            {
+                ec = e.code();
+            }
+
+            self->res.clear();
+            self->res_body_copy_.clear();
+            self->parser_.clear();
+            CROW_LOG_DEBUG << self << " from write(0) " << bytes_transferred << ", " << ec.message();
+
+            if (!ec)
+            {
+                if (self->close_connection_)
+                {
+                    self->adaptor_.shutdown_write();
+                    self->adaptor_.close();
+                    CROW_LOG_DEBUG << self << " from write(1)";
+                }
+            }
+            else
+            {
+                CROW_LOG_DEBUG << self << " from write(2)";
+            }
         }
 
         inline void do_write_sync(std::vector<asio::const_buffer>& buffers)
